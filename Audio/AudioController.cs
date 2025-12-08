@@ -46,7 +46,7 @@ public class AudioController : IDisposable
                 return;
             }
 
-            MediaPlayer.Volume = Math.Clamp(value, 0.0f, 1.0f);
+            MediaPlayer.Volume = System.Math.Clamp(value, 0.0f, 1.0f);
         }
     }
 
@@ -75,7 +75,7 @@ public class AudioController : IDisposable
                 return;
             }
 
-            SoundEffect.MasterVolume = Math.Clamp(value, 0.0f, 1.0f);
+            SoundEffect.MasterVolume = System.Math.Clamp(value, 0.0f, 1.0f);
         }
     }    
 

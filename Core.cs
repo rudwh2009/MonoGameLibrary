@@ -60,6 +60,17 @@ public class Core : Game
     public static AudioController Audio { get; private set; }
 
     /// <summary>
+    /// Manages the stack of scenes (main gameplay, menus, overlays).
+    /// </summary>
+    public static SceneManager SceneManager { get; private set; }
+
+    /// <summary>
+    /// Context object passed into all scenes.
+    /// Bundles graphics, input, audio, and content information.
+    /// </summary>
+    public SceneContext SceneContext { get; private set; }
+
+    /// <summary>
     /// Creates a new Core instance.
     /// </summary>
     /// <param name="title">The title to display in the title bar of the game window.</param>
@@ -116,11 +127,24 @@ public class Core : Game
         // Create the sprite batch instance.
         SpriteBatch = new SpriteBatch(GraphicsDevice);
 
+        // Create the scene manager that manages scene stack.
+        SceneManager = new SceneManager();
+
         // Create a new input manager.
         Input = new InputManager();
 
         // Create a new audio controller.
         Audio = new AudioController();
+
+        // Build the SceneContext that will be passed into all scenes.
+        SceneContext = new SceneContext(
+            Services,                // Global services (for new ContentManagers).
+            Content.RootDirectory,   // Content root directory.
+            GraphicsDevice,          // Graphics device.
+            SpriteBatch,             // Shared SpriteBatch.
+            Input,                   // Input manager.
+            Audio                    // Audio controller.
+        );
     }
 
     protected override void UnloadContent()
@@ -144,66 +168,17 @@ public class Core : Game
             Exit();
         }
 
-        // if there is a next scene waiting to be switch to, then transition
-        // to that scene.
-        if (s_nextScene != null)
-        {
-            TransitionScene();
-        }
-
-        // If there is an active scene, update it.
-        if (s_activeScene != null)
-        {
-            s_activeScene.Update(gameTime);
-        }
+        // Update the active scene via the SceneManager.
+        SceneManager.Update(gameTime);
 
         base.Update(gameTime);
     }
 
     protected override void Draw(GameTime gameTime)
     {
-        // If there is an active scene, draw it.
-        if (s_activeScene != null)
-        {
-            s_activeScene.Draw(gameTime);
-        }
+        // Ask the SceneManager to draw the active scene.
+        SceneManager.Draw(gameTime);
 
         base.Draw(gameTime);
-    }
-
-    public static void ChangeScene(Scene next)
-    {
-        // Only set the next scene value if it is not the same
-        // instance as the currently active scene.
-        if (s_activeScene != next)
-        {
-            s_nextScene = next;
-        }
-    }
-
-    private static void TransitionScene()
-    {
-        // If there is an active scene, dispose of it.
-        if (s_activeScene != null)
-        {
-            s_activeScene.Dispose();
-        }
-
-        // Force the garbage collector to collect to ensure memory is cleared.
-        GC.Collect();
-
-        // Change the currently active scene to the new scene.
-        s_activeScene = s_nextScene;
-
-        // Null out the next scene value so it does not trigger a change over and over.
-        s_nextScene = null;
-
-        // If the active scene now is not null, initialize it.
-        // Remember, just like with Game, the Initialize call also calls the
-        // Scene.LoadContent
-        if (s_activeScene != null)
-        {
-            s_activeScene.Initialize();
-        }
     }
 }
