@@ -157,17 +157,17 @@ public class Core : Game
 
     protected override void Update(GameTime gameTime)
     {
-        // Update the input manager.
-        Input.Update(gameTime);
-
-        // Update the audio controller.
-        Audio.Update();
-
         if (ExitOnEscape && Input.Keyboard.WasKeyJustPressed(Keys.Escape))
         {
             Exit();
         }
 
+        // Update the input manager.
+        Input.Update(gameTime);
+
+        // Update the audio controller.
+        Audio.Update();
+        
         // Update the active scene via the SceneManager.
         SceneManager.Update(gameTime);
 
