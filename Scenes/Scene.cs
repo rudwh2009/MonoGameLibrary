@@ -1,6 +1,7 @@
 using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Content;
+using MonoGameLibrary.Particles;
 
 namespace MonoGameLibrary.Scenes;
 
