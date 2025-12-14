@@ -64,6 +64,61 @@ public class Core : Game
     /// </summary>
     public SceneContext SceneContext { get; private set; }
 
+    private bool _useVirtualResolution;
+    private int _virtualWidth;
+    private int _virtualHeight;
+    private int _virtualRenderScale = 1;
+    private RenderTarget2D _virtualTarget;
+    private Color _virtualClearColor = Color.CornflowerBlue;
+
+    private Rectangle _virtualDestinationRect;
+
+    /// <summary>
+    /// Gets whether virtual resolution rendering is enabled.
+    /// </summary>
+    public bool IsVirtualResolutionEnabled => _useVirtualResolution;
+
+    /// <summary>
+    /// Gets the configured virtual backbuffer size.
+    /// Only meaningful when <see cref="IsVirtualResolutionEnabled"/> is true.
+    /// </summary>
+    public Point VirtualResolution => new(_virtualWidth, _virtualHeight);
+
+    /// <summary>
+    /// Gets the integer scale factor currently used when presenting the virtual resolution.
+    /// When virtual resolution is enabled, the engine renders to a scaled render target of
+    /// (VirtualWidth * VirtualRenderScale) x (VirtualHeight * VirtualRenderScale).
+    /// </summary>
+    public int VirtualRenderScale => _useVirtualResolution ? System.Math.Max(1, _virtualRenderScale) : 1;
+
+    /// <summary>
+    /// Gets the destination rectangle on the backbuffer where the virtual render is presented.
+    /// This accounts for integer scaling and letterboxing.
+    /// </summary>
+    public Rectangle VirtualDestinationRectangle
+    {
+        get
+        {
+            if (!_useVirtualResolution)
+                return new Rectangle(0, 0,
+                    System.Math.Max(1, GraphicsDevice?.PresentationParameters.BackBufferWidth ?? 1),
+                    System.Math.Max(1, GraphicsDevice?.PresentationParameters.BackBufferHeight ?? 1));
+
+            UpdateVirtualDestinationRectangle();
+            return _virtualDestinationRect;
+        }
+    }
+
+    /// <summary>
+    /// The clear color used for the virtual backbuffer when virtual resolution is enabled.
+    /// This is the "background" color you'll see behind scenes that don't draw a full-screen backdrop.
+    /// </summary>
+    public Color VirtualClearColor
+    {
+        get => _virtualClearColor;
+        set => _virtualClearColor = value;
+    }
+
     /// <summary>
     /// Creates a new Core instance.
     /// </summary>
@@ -96,6 +151,22 @@ public class Core : Game
         // Set the window title
         Window.Title = title;
 
+        // Pixel-art games usually want to scale to arbitrary window sizes.
+        Window.AllowUserResizing = true;
+        Window.ClientSizeChanged += (_, _) =>
+        {
+            // Keep the backbuffer in sync with the window size so our virtual-res scaler works.
+            if (Graphics == null)
+                return;
+            var w = System.Math.Max(1, Window.ClientBounds.Width);
+            var h = System.Math.Max(1, Window.ClientBounds.Height);
+            if (Graphics.PreferredBackBufferWidth == w && Graphics.PreferredBackBufferHeight == h)
+                return;
+            Graphics.PreferredBackBufferWidth = w;
+            Graphics.PreferredBackBufferHeight = h;
+            Graphics.ApplyChanges();
+        };
+
         // Set the core's content manager to a reference of the base Game's
         // content manager.
         Content = base.Content;
@@ -108,6 +179,35 @@ public class Core : Game
 
         // Exit on escape is true by default
         ExitOnEscape = true;        
+    }
+
+    /// <summary>
+    /// Enables a fixed internal render resolution that is scaled up to the window.
+    /// This is ideal for pixel art (render at 640x360, scale to 1280x720/1920x1080, etc.).
+    /// </summary>
+    public void SetVirtualResolution(int width, int height)
+    {
+        if (width <= 0)
+            throw new ArgumentOutOfRangeException(nameof(width));
+        if (height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(height));
+
+        _useVirtualResolution = true;
+        _virtualWidth = width;
+        _virtualHeight = height;
+
+        // If graphics device exists, (re)create immediately.
+        if (GraphicsDevice != null)
+            EnsureVirtualTarget();
+    }
+
+    public void DisableVirtualResolution()
+    {
+        _useVirtualResolution = false;
+        _virtualWidth = 0;
+        _virtualHeight = 0;
+        _virtualTarget?.Dispose();
+        _virtualTarget = null;
     }
 
     protected override void Initialize()
@@ -139,6 +239,39 @@ public class Core : Game
             Input,                   // Input manager.
             Audio                    // Audio controller.
         );
+
+        EnsureVirtualTarget();
+    }
+
+    private void EnsureVirtualTarget()
+    {
+        if (!_useVirtualResolution)
+            return;
+        if (_virtualWidth <= 0 || _virtualHeight <= 0)
+            return;
+        if (GraphicsDevice == null)
+            return;
+
+        // Ensure our cached destination rectangle/scale is up-to-date before allocating.
+        UpdateVirtualDestinationRectangle();
+
+        int scale = System.Math.Max(1, _virtualRenderScale);
+        int targetWidth = System.Math.Max(1, _virtualWidth * scale);
+        int targetHeight = System.Math.Max(1, _virtualHeight * scale);
+
+        if (_virtualTarget != null && _virtualTarget.Width == targetWidth && _virtualTarget.Height == targetHeight)
+            return;
+
+        _virtualTarget?.Dispose();
+        _virtualTarget = new RenderTarget2D(
+            GraphicsDevice,
+            targetWidth,
+            targetHeight,
+            false,
+            SurfaceFormat.Color,
+            DepthFormat.None,
+            0,
+            RenderTargetUsage.DiscardContents);
     }
 
     protected override void UnloadContent()
@@ -151,6 +284,10 @@ public class Core : Game
 
     protected override void Update(GameTime gameTime)
     {
+        // Keep viewport consistent for update logic (camera, spawning, UI layout).
+        // Draw() will temporarily switch viewport when presenting to the backbuffer.
+        ApplySceneViewport();
+
         if (ExitOnEscape && Input.Keyboard.WasKeyJustPressed(Keys.Escape))
         {
             Exit();
@@ -170,9 +307,138 @@ public class Core : Game
 
     protected override void Draw(GameTime gameTime)
     {
-        // Ask the SceneManager to draw the active scene.
-        SceneManager.Draw(gameTime);
+        EnsureVirtualTarget();
+
+        if (_useVirtualResolution && _virtualTarget != null)
+        {
+            // 1) Draw the scene into the fixed-size virtual target.
+            GraphicsDevice.SetRenderTarget(_virtualTarget);
+            // Render into a scaled target to support subpixel camera motion while keeping point sampling crisp.
+            int scale = System.Math.Max(1, _virtualRenderScale);
+            GraphicsDevice.Viewport = new Viewport(0, 0, _virtualWidth * scale, _virtualHeight * scale);
+            GraphicsDevice.Clear(_virtualClearColor);
+            SceneManager.Draw(gameTime);
+
+            // 2) Present the virtual target to the backbuffer, scaled with pixel-perfect sampling.
+            GraphicsDevice.SetRenderTarget(null);
+            GraphicsDevice.Viewport = new Viewport(0, 0, GraphicsDevice.PresentationParameters.BackBufferWidth, GraphicsDevice.PresentationParameters.BackBufferHeight);
+            GraphicsDevice.Clear(Color.Black);
+
+            UpdateVirtualDestinationRectangle();
+            var dest = _virtualDestinationRect;
+
+            SpriteBatch.Begin(blendState: BlendState.Opaque, samplerState: SamplerState.PointClamp);
+            SpriteBatch.Draw(_virtualTarget, dest, Color.White);
+            SpriteBatch.End();
+
+            // Restore the scene viewport so anything that queries GraphicsDevice.Viewport after Draw()
+            // (or at the start of next Update()) sees the virtual resolution.
+            ApplySceneViewport();
+        }
+        else
+        {
+            // Ask the SceneManager to draw the active scene.
+            SceneManager.Draw(gameTime);
+        }
 
         base.Draw(gameTime);
+    }
+
+    /// <summary>
+    /// Converts a point in window/backbuffer coordinates to virtual-resolution coordinates.
+    /// Returns coordinates in virtual pixels; if the point is in the letterbox area,
+    /// the result may be outside the [0..VirtualWidth/Height) range unless clamped.
+    /// </summary>
+    public Point WindowToVirtual(Point windowPoint, bool clampToVirtualBounds = false)
+    {
+        if (!_useVirtualResolution)
+            return windowPoint;
+
+        UpdateVirtualDestinationRectangle();
+
+        var dest = _virtualDestinationRect;
+        int scale = System.Math.Max(1, dest.Width / System.Math.Max(1, _virtualWidth));
+
+        int vx = (windowPoint.X - dest.X) / scale;
+        int vy = (windowPoint.Y - dest.Y) / scale;
+
+        if (clampToVirtualBounds)
+        {
+            vx = System.Math.Clamp(vx, 0, System.Math.Max(0, _virtualWidth - 1));
+            vy = System.Math.Clamp(vy, 0, System.Math.Max(0, _virtualHeight - 1));
+        }
+
+        return new Point(vx, vy);
+    }
+
+    /// <summary>
+    /// Convenience accessor for the current mouse position in virtual coordinates.
+    /// </summary>
+    public Point MousePositionVirtual(bool clampToVirtualBounds = false) => WindowToVirtual(Input.Mouse.Position, clampToVirtualBounds);
+
+    private void ApplySceneViewport()
+    {
+        if (GraphicsDevice == null)
+            return;
+
+        if (_useVirtualResolution && _virtualWidth > 0 && _virtualHeight > 0)
+        {
+            GraphicsDevice.Viewport = new Viewport(0, 0, _virtualWidth, _virtualHeight);
+            return;
+        }
+
+        GraphicsDevice.Viewport = new Viewport(
+            0,
+            0,
+            System.Math.Max(1, GraphicsDevice.PresentationParameters.BackBufferWidth),
+            System.Math.Max(1, GraphicsDevice.PresentationParameters.BackBufferHeight));
+    }
+
+    private void UpdateVirtualDestinationRectangle()
+    {
+        if (GraphicsDevice == null)
+        {
+            _virtualDestinationRect = new Rectangle(0, 0, 1, 1);
+            _virtualRenderScale = 1;
+            return;
+        }
+
+        if (!_useVirtualResolution || _virtualWidth <= 0 || _virtualHeight <= 0)
+        {
+            _virtualDestinationRect = new Rectangle(0, 0,
+                System.Math.Max(1, GraphicsDevice.PresentationParameters.BackBufferWidth),
+                System.Math.Max(1, GraphicsDevice.PresentationParameters.BackBufferHeight));
+            _virtualRenderScale = 1;
+            return;
+        }
+
+        int w = System.Math.Max(1, GraphicsDevice.PresentationParameters.BackBufferWidth);
+        int h = System.Math.Max(1, GraphicsDevice.PresentationParameters.BackBufferHeight);
+        int vw = System.Math.Max(1, _virtualWidth);
+        int vh = System.Math.Max(1, _virtualHeight);
+
+        int scaleX = w / vw;
+        int scaleY = h / vh;
+        _virtualRenderScale = System.Math.Max(1, System.Math.Min(scaleX, scaleY));
+
+        _virtualDestinationRect = GetLetterboxedDestination(w, h, vw, vh);
+    }
+
+    private static Rectangle GetLetterboxedDestination(int backBufferWidth, int backBufferHeight, int virtualWidth, int virtualHeight)
+    {
+        int w = System.Math.Max(1, backBufferWidth);
+        int h = System.Math.Max(1, backBufferHeight);
+        int vw = System.Math.Max(1, virtualWidth);
+        int vh = System.Math.Max(1, virtualHeight);
+
+        int scaleX = w / vw;
+        int scaleY = h / vh;
+        int scale = System.Math.Max(1, System.Math.Min(scaleX, scaleY));
+
+        int destW = vw * scale;
+        int destH = vh * scale;
+        int x = (w - destW) / 2;
+        int y = (h - destH) / 2;
+        return new Rectangle(x, y, destW, destH);
     }
 }
