@@ -86,8 +86,8 @@ public class Core : Game
 
     /// <summary>
     /// Gets the integer scale factor currently used when presenting the virtual resolution.
-    /// When virtual resolution is enabled, the engine renders to a scaled render target of
-    /// (VirtualWidth * VirtualRenderScale) x (VirtualHeight * VirtualRenderScale).
+    /// When virtual resolution is enabled, the engine renders the scene to the fixed virtual size,
+    /// then presents it to the backbuffer using integer scaling + letterboxing.
     /// </summary>
     public int VirtualRenderScale => _useVirtualResolution ? System.Math.Max(1, _virtualRenderScale) : 1;
 
@@ -160,6 +160,14 @@ public class Core : Game
                 return;
             var w = System.Math.Max(1, Window.ClientBounds.Width);
             var h = System.Math.Max(1, Window.ClientBounds.Height);
+
+            // For a pixel-art "scale up" workflow, don't allow the window/backbuffer to shrink
+            // below the virtual resolution.
+            if (_useVirtualResolution && _virtualWidth > 0 && _virtualHeight > 0)
+            {
+                w = System.Math.Max(w, _virtualWidth);
+                h = System.Math.Max(h, _virtualHeight);
+            }
             if (Graphics.PreferredBackBufferWidth == w && Graphics.PreferredBackBufferHeight == h)
                 return;
             Graphics.PreferredBackBufferWidth = w;
@@ -195,6 +203,20 @@ public class Core : Game
         _useVirtualResolution = true;
         _virtualWidth = width;
         _virtualHeight = height;
+
+        // Ensure the current backbuffer is at least the virtual size.
+        // (We still allow larger sizes; those will be integer-scaled with letterboxing.)
+        if (Graphics != null)
+        {
+            int w = System.Math.Max(Graphics.PreferredBackBufferWidth, _virtualWidth);
+            int h = System.Math.Max(Graphics.PreferredBackBufferHeight, _virtualHeight);
+            if (w != Graphics.PreferredBackBufferWidth || h != Graphics.PreferredBackBufferHeight)
+            {
+                Graphics.PreferredBackBufferWidth = w;
+                Graphics.PreferredBackBufferHeight = h;
+                Graphics.ApplyChanges();
+            }
+        }
 
         // If graphics device exists, (re)create immediately.
         if (GraphicsDevice != null)
@@ -255,9 +277,9 @@ public class Core : Game
         // Ensure our cached destination rectangle/scale is up-to-date before allocating.
         UpdateVirtualDestinationRectangle();
 
-        int scale = System.Math.Max(1, _virtualRenderScale);
-        int targetWidth = System.Math.Max(1, _virtualWidth * scale);
-        int targetHeight = System.Math.Max(1, _virtualHeight * scale);
+        // Render at the virtual resolution; presentation scaling happens when drawing to the backbuffer.
+        int targetWidth = System.Math.Max(1, _virtualWidth);
+        int targetHeight = System.Math.Max(1, _virtualHeight);
 
         if (_virtualTarget != null && _virtualTarget.Width == targetWidth && _virtualTarget.Height == targetHeight)
             return;
@@ -313,9 +335,7 @@ public class Core : Game
         {
             // 1) Draw the scene into the fixed-size virtual target.
             GraphicsDevice.SetRenderTarget(_virtualTarget);
-            // Render into a scaled target to support subpixel camera motion while keeping point sampling crisp.
-            int scale = System.Math.Max(1, _virtualRenderScale);
-            GraphicsDevice.Viewport = new Viewport(0, 0, _virtualWidth * scale, _virtualHeight * scale);
+            GraphicsDevice.Viewport = new Viewport(0, 0, _virtualWidth, _virtualHeight);
             GraphicsDevice.Clear(_virtualClearColor);
             SceneManager.Draw(gameTime);
 

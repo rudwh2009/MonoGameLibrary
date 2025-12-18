@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Xml;
 using System.Xml.Linq;
 using Microsoft.Xna.Framework;
@@ -12,6 +13,8 @@ namespace MonoGameLibrary.Graphics;
 public class TextureAtlas 
 {
     private Dictionary<string, TextureRegion> _regions;
+
+    public IEnumerable<TextureRegion> Regions => _regions?.Values;
 
     /// <summary>
     /// Gets or Sets the source texture represented by this texture atlas.
@@ -102,11 +105,18 @@ public class TextureAtlas
             {
                 XDocument doc = XDocument.Load(reader);
                 XElement root = doc.Root;
+                if (root == null)
+                    throw new InvalidDataException($"Texture atlas '{fileName}' has no root element.");
 
                 // The <Texture> element contains the content path for the Texture2D to load.
                 // So we will retrieve that value then use the content manager to load the texture.
-                string texturePath = root.Element("Texture").Value;
+                string texturePath = root.Element("Texture")?.Value;
+                if (string.IsNullOrWhiteSpace(texturePath))
+                    throw new InvalidDataException($"Texture atlas '{fileName}' is missing a <Texture> element (or it is empty).");
                 atlas.Texture = content.Load<Texture2D>(texturePath);
+                // Ensure a stable identifier for runtime caches (e.g., disk-backed alpha masks).
+                if (atlas.Texture != null && string.IsNullOrWhiteSpace(atlas.Texture.Name))
+                    atlas.Texture.Name = texturePath;
 
                 // The <Regions> element contains individual <Region> elements, each one describing
                 // a different texture region within the atlas.  
@@ -133,7 +143,12 @@ public class TextureAtlas
 
                         if (!string.IsNullOrEmpty(name))
                         {
-                            atlas.AddRegion(name, x, y, width, height);
+                            // Ignore invalid regions that exceed the texture bounds.
+                            if (atlas.Texture != null && width > 0 && height > 0 && x >= 0 && y >= 0 &&
+                                x + width <= atlas.Texture.Width && y + height <= atlas.Texture.Height)
+                            {
+                                atlas.AddRegion(name, x, y, width, height);
+                            }
                         }
                     }
                 }
@@ -151,12 +166,10 @@ public class TextureAtlas
                 //
                 // So we retrieve all of the <Animation> elements then loop through each one
                 // and generate a new Animation instance from it and add it to this atlas.
-                var animationElements = root.Element("Animations").Elements("Animation");
+                var animationElements = root.Element("Animations")?.Elements("Animation") ?? Enumerable.Empty<XElement>();
 
-                if (animationElements != null)
+                foreach (var animationElement in animationElements)
                 {
-                    foreach (var animationElement in animationElements)
-                    {
                         string name = animationElement.Attribute("name")?.Value;
                         float delayInMilliseconds = float.Parse(animationElement.Attribute("delay")?.Value ?? "0");
                         TimeSpan delay = TimeSpan.FromMilliseconds(delayInMilliseconds);
@@ -169,15 +182,23 @@ public class TextureAtlas
                         {
                             foreach (var frameElement in frameElements)
                             {
-                                string regionName = frameElement.Attribute("region").Value;
-                                TextureRegion region = atlas.GetRegion(regionName);
+                                string regionName = frameElement.Attribute("region")?.Value;
+                                if (string.IsNullOrWhiteSpace(regionName))
+                                    continue;
+
+                                // Be tolerant of bad/mismatched atlases: skip frames referencing missing regions.
+                                if (!atlas._regions.TryGetValue(regionName, out TextureRegion region) || region == null)
+                                    continue;
+
                                 frames.Add(region);
                             }
                         }
 
-                        Animation animation = new Animation(frames, delay);
-                        atlas.AddAnimation(name, animation);
-                    }
+                        if (frames.Count != 0)
+                        {
+                            Animation animation = new Animation(frames, delay);
+                            atlas.AddAnimation(name, animation);
+                        }
                 }
 
                 return atlas;
@@ -227,6 +248,23 @@ public class TextureAtlas
     public Animation GetAnimation(string animationName)
     {
         return _animations[animationName];
+    }
+
+    /// <summary>
+    /// Attempts to get the animation from this texture atlas with the specified name.
+    /// </summary>
+    /// <param name="animationName">The name of the animation to retrieve.</param>
+    /// <param name="animation">The resulting animation, or null if not found.</param>
+    /// <returns>true if the animation exists; otherwise, false.</returns>
+    public bool TryGetAnimation(string animationName, out Animation animation)
+    {
+        if (string.IsNullOrWhiteSpace(animationName))
+        {
+            animation = null;
+            return false;
+        }
+
+        return _animations.TryGetValue(animationName, out animation);
     }
 
     /// <summary>

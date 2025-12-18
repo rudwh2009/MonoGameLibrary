@@ -87,11 +87,47 @@ public class ParticleManager<T>
             else
                 particle.PercentLife = -1f;
 
-            // sift deleted particles to the end of the list 
-            Swap(particleList, i - removalCount, i);
-            // if the particle has expired, delete this particle 
-            if (particle.PercentLife < 0)
+			// Sift deleted particles to the end of the list.
+			// Only swap once we have actually found a dead particle; this avoids a swap on every live particle.
+			if (particle.PercentLife < 0)
+			{
+				removalCount++;
+			}
+			else if (removalCount != 0)
+			{
+				Swap(particleList, i - removalCount, i);
+			}
+        }
+        particleList.Count -= removalCount;
+    }
+
+    /// <summary>
+    /// Removes particles whose positions are farther than <paramref name="maxDistSq"/> from <paramref name="center"/>.
+    /// Useful as a cheap camera-based culling step to reduce both update and draw costs.
+    /// </summary>
+    public void CullByDistanceSquared(Vector2 center, float maxDistSq)
+    {
+        if (particleList.Count == 0)
+            return;
+        if (maxDistSq <= 0f)
+        {
+            particleList.Count = 0;
+            return;
+        }
+
+        int removalCount = 0;
+        for (int i = 0; i < particleList.Count; i++)
+        {
+            var particle = particleList[i];
+            float d2 = Vector2.DistanceSquared(center, particle.Position);
+            if (d2 > maxDistSq)
+            {
                 removalCount++;
+            }
+            else if (removalCount != 0)
+            {
+                Swap(particleList, i - removalCount, i);
+            }
         }
         particleList.Count -= removalCount;
     }
@@ -102,6 +138,8 @@ public class ParticleManager<T>
     }
     private static void Swap(CircularParticleArray list, int index1, int index2)
     {
+		if (index1 == index2)
+			return;
         var temp = list[index1];
         list[index1] = list[index2];
         list[index2] = temp;
@@ -109,24 +147,89 @@ public class ParticleManager<T>
 
     public void Draw(SpriteBatch spriteBatch)
     {
+        Texture2D lastTexture = null;
+        Vector2 lastOrigin = default;
         for (int i = 0; i < particleList.Count; i++)
         {
             var particle = particleList[i];
-            Vector2 origin = new Vector2(particle.Texture.Width / 2f, particle.Texture.Height / 2f);
-            spriteBatch.Draw(particle.Texture, particle.Position, null, particle.Tint, particle.Orientation, origin, particle.Scale, 0, 0);
+            var tex = particle.Texture;
+            if (tex != lastTexture)
+            {
+                lastTexture = tex;
+                // Fast-path the common 1x1 pixel texture.
+                lastOrigin = (tex.Width == 1 && tex.Height == 1)
+                    ? new Vector2(0.5f, 0.5f)
+                    : new Vector2(tex.Width * 0.5f, tex.Height * 0.5f);
+            }
+            spriteBatch.Draw(tex, particle.Position, null, particle.Tint, particle.Orientation, lastOrigin, particle.Scale, 0, 0);
+        }
+    }
+
+    public void DrawCulled(SpriteBatch spriteBatch, Vector2 center, float maxDistSq)
+    {
+        Texture2D lastTexture = null;
+        Vector2 lastOrigin = default;
+        for (int i = 0; i < particleList.Count; i++)
+        {
+            var particle = particleList[i];
+            if (Vector2.DistanceSquared(center, particle.Position) > maxDistSq)
+                continue;
+
+            var tex = particle.Texture;
+            if (tex != lastTexture)
+            {
+                lastTexture = tex;
+                lastOrigin = (tex.Width == 1 && tex.Height == 1)
+                    ? new Vector2(0.5f, 0.5f)
+                    : new Vector2(tex.Width * 0.5f, tex.Height * 0.5f);
+            }
+            spriteBatch.Draw(tex, particle.Position, null, particle.Tint, particle.Orientation, lastOrigin, particle.Scale, 0, 0);
         }
     }
 
     public void Draw(SpriteBatch spriteBatch, ParticleBlendMode blendMode)
     {
+		Texture2D lastTexture = null;
+		Vector2 lastOrigin = default;
         for (int i = 0; i < particleList.Count; i++)
         {
             var particle = particleList[i];
             if (particle.BlendMode != blendMode)
                 continue;
 
-            Vector2 origin = new Vector2(particle.Texture.Width / 2f, particle.Texture.Height / 2f);
-            spriteBatch.Draw(particle.Texture, particle.Position, null, particle.Tint, particle.Orientation, origin, particle.Scale, 0, 0);
+			var tex = particle.Texture;
+			if (tex != lastTexture)
+			{
+				lastTexture = tex;
+				lastOrigin = (tex.Width == 1 && tex.Height == 1)
+					? new Vector2(0.5f, 0.5f)
+					: new Vector2(tex.Width * 0.5f, tex.Height * 0.5f);
+			}
+			spriteBatch.Draw(tex, particle.Position, null, particle.Tint, particle.Orientation, lastOrigin, particle.Scale, 0, 0);
+        }
+    }
+
+    public void DrawCulled(SpriteBatch spriteBatch, ParticleBlendMode blendMode, Vector2 center, float maxDistSq)
+    {
+        Texture2D lastTexture = null;
+        Vector2 lastOrigin = default;
+        for (int i = 0; i < particleList.Count; i++)
+        {
+            var particle = particleList[i];
+            if (particle.BlendMode != blendMode)
+                continue;
+            if (Vector2.DistanceSquared(center, particle.Position) > maxDistSq)
+                continue;
+
+            var tex = particle.Texture;
+            if (tex != lastTexture)
+            {
+                lastTexture = tex;
+                lastOrigin = (tex.Width == 1 && tex.Height == 1)
+                    ? new Vector2(0.5f, 0.5f)
+                    : new Vector2(tex.Width * 0.5f, tex.Height * 0.5f);
+            }
+            spriteBatch.Draw(tex, particle.Position, null, particle.Tint, particle.Orientation, lastOrigin, particle.Scale, 0, 0);
         }
     }
 }

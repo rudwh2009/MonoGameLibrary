@@ -13,6 +13,13 @@ public sealed class Camera2D
     public float Rotation { get; set; } = 0f;
 
     /// <summary>
+    /// The integer presentation scale used for pixel-perfect snapping.
+    /// If your virtual backbuffer is scaled up 2x on the window, set this to 2 to allow
+    /// half-pixel camera steps in world space while still landing on whole screen pixels.
+    /// </summary>
+    public int PixelPerfectScale { get; set; } = 1;
+
+    /// <summary>
     /// When enabled, the camera translation is snapped to the pixel grid in screen space.
     /// This avoids visible shimmer/jitter when using PointClamp sampling with zoom.
     /// Note: pixel snapping is most appropriate when <see cref="Rotation"/> is 0.
@@ -29,7 +36,8 @@ public sealed class Camera2D
             return worldPosition;
 
         var zoom = MathHelper.Max(Zoom, 0.01f);
-        float step = 1f / zoom;
+        int scale = System.Math.Max(1, PixelPerfectScale);
+        float step = 1f / (zoom * scale);
         return new Vector2(
             System.MathF.Round(worldPosition.X / step) * step,
             System.MathF.Round(worldPosition.Y / step) * step);
@@ -44,8 +52,9 @@ public sealed class Camera2D
         if (PixelSnap)
         {
             // Snap in screen space then convert back to world space:
-            // screen = world * zoom => worldStep = 1/zoom
-            float step = 1f / zoom;
+            // screen = world * zoom * scale => worldStep = 1/(zoom*scale)
+            int scale = System.Math.Max(1, PixelPerfectScale);
+            float step = 1f / (zoom * scale);
             position = new Vector2(
                 System.MathF.Round(position.X / step) * step,
                 System.MathF.Round(position.Y / step) * step);

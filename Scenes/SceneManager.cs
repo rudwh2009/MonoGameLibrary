@@ -128,7 +128,21 @@ public sealed class SceneManager
     /// <param name="gameTime">Timing values for the current frame.</param>
     public void Draw(GameTime gameTime)
     {
-        // Forward the draw call to the active scene.
-        ActiveScene?.Draw(gameTime);
+        var active = ActiveScene;
+        if (active == null)
+            return;
+
+        // If the active scene is an overlay, draw scenes underneath it first.
+        if (active.DrawUnderlyingScenes)
+        {
+            // Stack enumeration yields top->bottom. We want bottom->top.
+            var scenes = _scenes.ToArray();
+            for (int i = scenes.Length - 1; i >= 0; i--)
+                scenes[i].Draw(gameTime);
+            return;
+        }
+
+        // Otherwise, draw only the active scene.
+        active.Draw(gameTime);
     }
 }

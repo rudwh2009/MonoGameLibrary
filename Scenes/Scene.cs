@@ -41,6 +41,12 @@ public abstract class Scene : IDisposable
     public bool IsDisposed { get; private set; }
 
     /// <summary>
+    /// When true on the active scene, <see cref="SceneManager"/> will draw scenes underneath it first,
+    /// then draw the active scene on top. Useful for pause menus and popups.
+    /// </summary>
+    public virtual bool DrawUnderlyingScenes => false;
+
+    /// <summary>
     /// Creates a new scene instance with the given context.
     /// </summary>
     /// <param name="context">Shared services that this scene depends on.</param>

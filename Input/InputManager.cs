@@ -15,6 +15,11 @@ public class InputManager
     public MouseInfo Mouse { get; private set; }
 
     /// <summary>
+    /// Gets the state information of touch input (primarily used on mobile).
+    /// </summary>
+    public TouchInfo Touch { get; private set; }
+
+    /// <summary>
     /// Gets the state information of a gamepad.
     /// </summary>
     public GamePadInfo[] GamePads { get; private set; }
@@ -26,6 +31,7 @@ public class InputManager
     {
         Keyboard = new KeyboardInfo();
         Mouse = new MouseInfo();
+        Touch = new TouchInfo();
 
         GamePads = new GamePadInfo[4];
         for (int i = 0; i < 4; i++)
@@ -42,6 +48,7 @@ public class InputManager
     {
         Keyboard.Update();
         Mouse.Update();
+        Touch.Update();
 
         for (int i = 0; i < 4; i++)
         {
